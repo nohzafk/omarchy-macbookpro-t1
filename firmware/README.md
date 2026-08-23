@@ -82,8 +82,10 @@ a real dump from Apple BCM43602 hardware. Used **unmodified except for the MAC**
 - `aa2g=7 aa5g=7 txchain=7 rxchain=7` implies three antennas, which suggests the dump came
   from a 15-inch board. It still works on this 13-inch machine.
 - `boardflags3=0x00000300`. Several guides insist `0xC0000303` is required to enable both
-  bands. **That was not necessary here** — 5 GHz came up with the value above. If 5 GHz
-  does not appear for you, that is the next single variable to change.
+  bands. **That was not necessary here** — 5 GHz came up with the value above. It has since
+  been **tested directly**: `0xC0000303` was installed on a `MacBookPro14,2`, and produced an
+  identical channel width and identical throughput within measurement noise (~246 vs
+  ~248 Mbit/s over four samples each). Those guides are wrong, at least on this board.
 - **The TX calibration tables are incomplete in the source dump.** It sets
   `nchannels_txcal=10` and defines `chan_id_txcal_ch0` through `ch9`, but the TSSI data
   stops partway through the second channel, at `tssi_chan1_c0` — so roughly 1.3 of the 10
@@ -91,6 +93,9 @@ a real dump from Apple BCM43602 hardware. Used **unmodified except for the MAC**
   truncation, not an error introduced here, and the file works regardless. Worth knowing if
   you are chasing a lower-than-expected 5 GHz link rate.
 - `ccode=00` and `regrev=245` were left as-is. The kernel's own regulatory domain still
-  applies, so channel legality is enforced regardless.
+  applies, so channel legality is enforced regardless. **Do not bother changing them:**
+  `ccode=BR regrev=0` was tested on a `MacBookPro14,2` and the firmware ignored it outright —
+  `iw reg get` still reported `phy#0  country 99: DFS-UNSET`, unchanged, with throughput
+  unchanged. The 43602 blob appears to carry no per-country tables, so this is not a knob.
 
 The MAC in the copy stored here is deliberately `xx:xx:xx:xx:xx:xx`. Set your own.

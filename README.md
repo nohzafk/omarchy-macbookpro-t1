@@ -307,7 +307,34 @@ Wi-Fi is your only route into the machine, that turns a working fallback into a 
 Measured after the fix: 5220 MHz, -43 dBm, 300 Mbit/s, chosen automatically on boot.
 
 `boardflags3=0x00000300` was sufficient here. Several guides insist `0xC0000303` is required
-for dual band; it was not. If 5 GHz does not appear, that is the next single variable.
+for dual band; it was not — and that value has now been tested directly on a
+`MacBookPro14,2`: same channel width, same throughput within noise. Setting a real `ccode`
+is equally pointless, because the firmware ignores it. Both dead ends are documented in
+[`firmware/`](firmware/), so nobody needs to spend a reboot rediscovering them.
+
+### If 5 GHz works but throughput caps around 150 Mbit/s
+
+The NVRAM gets you onto 5 GHz. It does **not** get you a wide channel, and that is worth
+roughly another 2x. Check what you actually negotiated:
+
+```bash
+iw dev wlp2s0 info | grep -E 'channel|width'
+#   width: 20 MHz  -> 173 Mbit/s PHY ceiling, ~130 Mbit/s real
+#   width: 40 MHz  -> 400 Mbit/s PHY ceiling, ~250 Mbit/s real
+```
+
+**The usual cause is a DFS channel.** Routers left on "auto" often land on one — channels
+100-144, the 5470-5725 band — and there this adapter falls back to 20 MHz. Move the router's
+5 GHz radio to a non-DFS channel (**149, 153, 157 or 161**) and set 80 MHz width.
+
+Measured on a `MacBookPro14,2`, that one router-side change took throughput from ~123 to
+~248 Mbit/s and the signal from -58 to -50 dBm — the latter because the non-DFS band permits
+a higher EIRP than the DFS band does.
+
+**40 MHz looks like this chip's ceiling under Linux.** With the AP advertising 80 MHz and the
+adapter advertising 80 MHz VHT support, `brcmfmac` still associated at 40 MHz under every
+NVRAM variation tried. The BCM43602 is FullMAC: the firmware negotiates association, and no
+board configuration reaches that decision.
 
 ---
 
