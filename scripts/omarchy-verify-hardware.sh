@@ -44,7 +44,7 @@ if grep -q '05ac:8600' <<<"$usb"; then
 elif grep -q '05ac:1281' <<<"$usb"; then
   bad "T1 in RECOVERY MODE (05ac:1281) - ESP firmware is missing"
   echo "        Touch Bar, webcam, Touch ID and ALS cannot work until it is restored."
-  echo "        See docs/omarchy-macbookpro14-2.md section 8."
+  echo "        See README.md, 'Read this before you install anything'."
 elif [ -z "$usb" ]; then
   warn "no Apple USB device present at all (neither 8600 nor 1281)"
 else
@@ -55,9 +55,12 @@ fi
 echo
 echo "== Omarchy automatic fixes =="
 if have pacman; then
+  # Part 3 of the README says to REMOVE this package: it cannot build on a
+  # current kernel (four API changes) and its module names collide with the
+  # working fork. applespi has been mainline since 5.3, so absence is correct.
   pacman -Q macbook12-spi-driver-dkms &>/dev/null \
-    && ok "macbook12-spi-driver-dkms installed" \
-    || bad "macbook12-spi-driver-dkms missing"
+    && warn "macbook12-spi-driver-dkms installed - remove it, see README Part 3" \
+    || ok "macbook12-spi-driver-dkms absent (correct: applespi is mainline)"
 else
   skip "pacman not found"
 fi
@@ -92,9 +95,6 @@ if systemctl is-enabled usbmuxd.service &>/dev/null; then
 else
   ok "usbmuxd masked or absent"
 fi
-[[ -f /etc/modprobe.d/apple-ibridge.conf ]] \
-  && ok "usbhid quirk present" \
-  || warn "usbhid quirk missing (/etc/modprobe.d/apple-ibridge.conf)"
 
 echo
 echo "== webcam =="
@@ -116,7 +116,13 @@ fi
 echo
 echo "== thermal =="
 mod applesmc && ok "applesmc loaded (fan and SMC sensors)" || warn "applesmc not loaded"
-systemctl is-active mbpfan &>/dev/null && ok "mbpfan running" || warn "mbpfan not running"
+# Part 8: the SMC manages fans in firmware, so mbpfan is not needed here.
+# Report its state as information, never as a problem.
+if systemctl is-active mbpfan &>/dev/null; then
+  ok "mbpfan running (not required: the SMC manages fans in firmware)"
+else
+  ok "mbpfan not running (correct: the SMC manages fans in firmware)"
+fi
 if have sensors; then
   sensors 2>/dev/null | grep -iE 'fan|Core|Package' | head -6
 else
