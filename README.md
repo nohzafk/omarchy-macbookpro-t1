@@ -253,10 +253,18 @@ and no service reads that file.
 
 **The driver cannot be reloaded live.** NetworkManager holds it, so `modprobe -r brcmfmac`
 returns "Module brcmfmac is in use" and the NVRAM is never re-read. **Only a fresh boot picks
-it up.** Since Wi-Fi may be your only route in, arm a failsafe before rebooting: a systemd
-oneshot that waits ~100 s, checks `nmcli -t -f STATE general`, and deletes the NVRAM if the
-network did not come up. **Disable it once confirmed**, or a future boot with a slow
-NetworkManager will false-positive and delete a working file.
+it up.** Since Wi-Fi may be your only route in, arm the failsafe in
+[`systemd/`](systemd/) before rebooting — a oneshot that waits ~100 s, checks
+`nmcli -t -f STATE general`, and reverts the NVRAM if the network did not come up:
+
+```bash
+sudo install -m 755 systemd/wifi-nvram-failsafe.sh      /usr/local/sbin/
+sudo install -m 644 systemd/wifi-nvram-failsafe.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable wifi-nvram-failsafe.service
+```
+
+**Disable it once confirmed** — `sudo systemctl disable --now wifi-nvram-failsafe.service` —
+or a future boot with a slow NetworkManager will false-positive and delete a working file.
 
 ### The NVRAM enables the band, it does not choose it
 
