@@ -1,0 +1,17 @@
+[Unit]
+Description=Revert the BCM43602 NVRAM if the network did not come up
+Documentation=https://github.com/nohzafk/omarchy-macbookpro-t1/blob/main/firmware/README.md
+# Late on purpose: NetworkManager needs time to associate before the verdict is meaningful.
+After=multi-user.target NetworkManager.service
+# Nothing to revert if the NVRAM is already gone.
+ConditionPathExists=/lib/firmware/brcm/brcmfmac43602-pcie.txt
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-nvram-failsafe.sh
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
