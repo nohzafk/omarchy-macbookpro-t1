@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Report the hardware state of a MacBookPro14,2 running Omarchy.
+# Report the hardware state of a T1 MacBook Pro (14,2 / 14,3) running Omarchy.
 # Read-only: it changes nothing. Run it after the install and after each fix.
 #
 # Optional: lm_sensors (sensors), iw, wpctl. Missing tools are reported as SKIP, never as

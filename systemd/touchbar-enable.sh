@@ -30,7 +30,18 @@ tb_attr_dir() {
 }
 
 
-KDIR="/lib/modules/$(uname -r)/updates/dkms"
+KDIR=""
+for _d in \
+	"/lib/modules/$(uname -r)/updates/dkms" \
+	"/lib/modules/$(uname -r)/updates" \
+	"/lib/modules/$(uname -r)/extra"; do
+	if [ -f "$_d/apple-ibridge.ko.zst" ] || [ -f "$_d/apple-ibridge.ko" ]; then
+		KDIR="$_d"
+		break
+	fi
+done
+[ -n "$KDIR" ] || KDIR="/lib/modules/$(uname -r)/updates/dkms"
+log "using modules from $KDIR"
 WORK=/run/touchbar
 IBDEV=0003:05AC:8600.0002
 HIDDRV=/sys/bus/hid/drivers

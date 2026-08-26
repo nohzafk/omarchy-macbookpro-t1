@@ -4,8 +4,11 @@ Getting **Omarchy** — and Linux generally — working properly on a MacBook Pr
 **T1** chip, including the parts everyone says are impossible.
 
 Verified on a **MacBookPro14,2** (13-inch 2017, Touch Bar), kernel **7.1.8-arch1-3**, gcc
-16.2.1. Should apply to any T1 machine: `MacBookPro13,1/13,2/13,3` and
-`MacBookPro14,1/14,2/14,3`.
+16.2.1, and independently on a **MacBookPro14,3** (15-inch 2017, Touch Bar + Radeon Pro 560),
+kernel **7.1.9-arch1-2**, Omarchy 4.0.1. Should apply to any T1 machine:
+`MacBookPro13,1/13,2/13,3` and `MacBookPro14,1/14,2/14,3`.
+
+14,3 field notes: [`docs/macbookpro14-3.md`](docs/macbookpro14-3.md).
 
 ## Results
 
@@ -402,16 +405,23 @@ printf '%s' "$DEV" | sudo tee /sys/bus/hid/drivers/apple-ibridge-hid/bind >/dev/
 
 ```bash
 sudo pacman -S --needed linux-headers dkms
+sudo ./scripts/install-touchbar.sh
+journalctl -u touchbar.service -n 20
+```
+
+The script DKMS-builds the modules (without rebuilding initramfs), blacklists them
+so udev cannot load them at sysinit, then enables the late oneshot. Equivalent by
+hand:
+
+```bash
 sudo mkdir -p /usr/src/appleibridge-0.1
 sudo cp drivers/appleibridge/{*.c,*.h,Makefile,dkms.conf} /usr/src/appleibridge-0.1/
 sudo dkms add -m appleibridge -v 0.1
 sudo dkms build -m appleibridge -v 0.1
 sudo dkms install -m appleibridge -v 0.1
-
 sudo install -m 755 systemd/touchbar-enable.sh /usr/local/sbin/
 sudo install -m 644 systemd/touchbar.service   /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now touchbar.service
-journalctl -u touchbar.service -n 20
 ```
 
 Expect `SUCCESS: fnmode=0 idle=-1 dim=-1`.
@@ -452,6 +462,10 @@ all-commented template.
 
 If your goal is simply "I need an Escape key", stop here — that is three lines and thirty
 seconds. The Touch Bar is a separate, optional project.
+
+Fn + `` ` `` is the other physical option, and is what you want until the Touch Bar
+driver is up. `scripts/keyd-apple-esc.conf` maps it; Fn must be a *layer*, not a
+50 ms chord, or the key still types backtick.
 
 ---
 

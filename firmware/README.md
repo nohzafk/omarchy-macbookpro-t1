@@ -32,8 +32,10 @@ OUI — no NVRAM was loaded, and everything above applies.
 #    Linux without NVRAM the adapter reports the placeholder, not the real one.
 sed -i 's/^macaddr=.*/macaddr=AA:BB:CC:DD:EE:FF/' brcmfmac43602-pcie.txt   # <- YOUR MAC
 
-# 2. install
-sudo cp brcmfmac43602-pcie.txt /lib/firmware/brcm/
+# 2. install under firmware/updates so a linux-firmware package upgrade
+#    cannot clobber it. /lib/firmware/brcm/ is owned by the package.
+sudo mkdir -p /usr/lib/firmware/updates/brcm
+sudo cp brcmfmac43602-pcie.txt /usr/lib/firmware/updates/brcm/brcmfmac43602-pcie.txt
 
 # 3. reboot. The driver cannot be reloaded live — NetworkManager holds it, so
 #    `modprobe -r brcmfmac` fails with "Module brcmfmac is in use" and the NVRAM is
