@@ -5,7 +5,7 @@ Documentation=https://github.com/nohzafk/omarchy-macbookpro-t1/blob/main/drivers
 # there it hangs sysinit.target and only a forced power-off recovers. Ordered after
 # multi-user.target so any failure delays nothing that matters.
 After=multi-user.target
-ConditionPathExistsGlob=/sys/bus/hid/devices/0003:05AC:8600.0001
+ConditionPathExistsGlob=/sys/bus/hid/devices/*:05AC:8600.*
 
 [Service]
 Type=oneshot

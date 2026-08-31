@@ -352,21 +352,23 @@ and **neither is what the community discusses.**
 
 Full detail in [`drivers/appleibridge/`](drivers/appleibridge/); the short version:
 
-### Bug 1 — the driver self-deadlocks
+### Bug 1 — synchronous configuration change deadlocks probe
 
-`apple_ib_set_tb_mode()` calls `usb_set_configuration()` **while holding**
-`appleib_tbmode_lock`. That call rebuilds the USB configuration and re-binds every interface
-driver synchronously *in the same task*, re-entering `appleib_hid_probe()` → the same
-function → the same mutex:
+`apple_ib_set_tb_mode()` is called from `appleib_hid_probe()`, but it called
+`usb_set_configuration()` synchronously. That tears down the HID interface currently being
+probed. Releasing the driver's own mode lock avoids one recursive lock, but the probe still
+deadlocks on driver-core device locks while removing itself:
 
 ```
 INFO: task modprobe:24033 is blocked on a mutex likely owned by task modprobe:24033.
+task:(udev-worker) state:D ... device_del ... usb_set_configuration
 ```
 
-The task is unkillable (`D` state), it hangs `sysinit.target` so the login screen never
-appears, and it blocks shutdown — recovery is a forced power-off.
+The unkillable worker can hang startup and prevents suspend because the freezer cannot stop
+it. The patch now uses `usb_driver_set_configuration()`, the USB core helper that queues the
+configuration change on a work thread after probe can release its locks.
 
-Patched here. It can also be **side-stepped with no patch**: the deadlock only fires when the
+It can also be **side-stepped with no patch**: the deadlock only fires when the
 configuration actually changes, so `tb_mode_param=keyboard` selects the config the device
 already boots in and takes the early return.
 
@@ -408,6 +410,7 @@ sudo dkms add -m appleibridge -v 0.1
 sudo dkms build -m appleibridge -v 0.1
 sudo dkms install -m appleibridge -v 0.1
 
+sudo install -m 644 systemd/apple-ibridge.conf  /etc/modprobe.d/
 sudo install -m 755 systemd/touchbar-enable.sh /usr/local/sbin/
 sudo install -m 644 systemd/touchbar.service   /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now touchbar.service
@@ -415,6 +418,11 @@ journalctl -u touchbar.service -n 20
 ```
 
 Expect `SUCCESS: fnmode=0 idle=-1 dim=-1`.
+
+The modprobe blacklist prevents the ACPI alias from loading `apple_ibridge` in its default
+`auto` mode during boot. The service deliberately uses `insmod`, which ignores that blacklist,
+and loads it later with `tb_mode_param=keyboard`. HID instance suffixes such as `.0001` and
+`.0002` are not stable; the service discovers the current interfaces dynamically.
 
 The service runs **after `multi-user.target`** on purpose. Loading these modules from
 `/etc/modules-load.d/` hangs `sysinit.target` when anything wedges, and the only recovery is a
