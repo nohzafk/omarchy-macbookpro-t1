@@ -123,6 +123,7 @@ Use `printf '%s' '-1'`, not `printf -1` — the latter parses `-1` as an option.
 `systemd/touchbar-enable.sh` plus `systemd/touchbar.service` in this repo. Install with:
 
 ```bash
+sudo install -m 644 systemd/apple-ibridge.conf  /etc/modprobe.d/apple-ibridge.conf
 sudo install -m 755 systemd/touchbar-enable.sh /usr/local/sbin/touchbar-enable.sh
 sudo install -m 644 systemd/touchbar.service   /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now touchbar.service

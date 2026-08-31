@@ -3,17 +3,18 @@
 #
 # WHY THIS EXISTS AND WHY IT RUNS LATE
 #   At boot the generic HID drivers claim both iBridge interfaces, and hid-sensor-hub keeps
-#   .0002 — the interface carrying the Touch Bar reports. apple_ibridge reclaims only .0001,
+#   the interface carrying the Touch Bar reports. apple_ibridge reclaims the other interface,
 #   so appletb_probe never finds a device: no sysfs group, no input device, dark strip, and
-#   no error anywhere. This takes .0002 back.
+#   no error anywhere. HID instance numbers change on every re-enumeration, so discover the
+#   remaining interface by its driver instead of assuming .0001/.0002.
 #
 #   It runs after multi-user.target on purpose. Loading these modules from
 #   /etc/modules-load.d/ hangs sysinit.target if anything wedges, and the only recovery is a
 #   forced power-off. Late and slow beats early and fatal.
 #
-#   insmod, not modprobe: the kernel cmdline blacklists these modules so nothing can pull
-#   them in early by accident. insmod ignores the blacklist, which keeps that guard intact
-#   while still letting this script load them deliberately.
+#   insmod, not modprobe: /etc/modprobe.d/apple-ibridge.conf blacklists the coordinator so
+#   its ACPI alias cannot pull it in early with the default mode. insmod ignores the
+#   blacklist, which keeps that guard intact while still loading it deliberately.
 set -uo pipefail
 
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
@@ -23,17 +24,31 @@ log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
 # attribute exists. Resolve the link instead. Getting this wrong reported a false failure
 # and triggered a pointless module reload that leaked a stale input device each time.
 tb_attr_dir() {
-	local real
-	real=$(readlink -f "/sys/bus/hid/devices/0003:05AC:8600.0001" 2>/dev/null) || return 1
-	[ -n "$real" ] && [ -e "$real/fnmode" ] && { printf '%s' "$real"; return 0; }
+	local dev real
+	for dev in /sys/bus/hid/devices/*:05AC:8600.*; do
+		[ -e "$dev" ] || continue
+		real=$(readlink -f "$dev" 2>/dev/null) || continue
+		[ -e "$real/fnmode" ] && { printf '%s' "$real"; return 0; }
+	done
 	return 1
 }
 
-
 KDIR="/lib/modules/$(uname -r)/updates/dkms"
 WORK=/run/touchbar
-IBDEV=0003:05AC:8600.0002
 HIDDRV=/sys/bus/hid/drivers
+
+rebind_candidate() {
+	local cur dev driver
+	for dev in /sys/bus/hid/devices/*:05AC:8600.*; do
+		[ -e "$dev" ] || continue
+		driver=$(readlink -f "$dev/driver" 2>/dev/null) || driver=""
+		cur=${driver##*/}
+		[ "$cur" = "apple-ibridge-hid" ] && continue
+		printf '%s' "${dev##*/}"
+		return 0
+	done
+	return 1
+}
 
 # ── 0. is the T1 even alive? ─────────────────────────────────────────────────────────────
 found=""
@@ -61,9 +76,7 @@ log "modules unpacked"
 
 # ── 2. coordinator first, in keyboard mode ───────────────────────────────────────────────
 # tb_mode_param=keyboard picks the USB configuration the device already boots in, so
-# apple_ib_set_tb_mode() takes its early return and never calls usb_set_configuration().
-# That call re-binds interface drivers in the same task and re-enters the function, which
-# self-deadlocks on appleib_tbmode_lock in unpatched builds.
+# apple_ib_set_tb_mode() takes its early return and avoids unnecessary re-enumeration.
 if ! grep -q '^apple_ibridge ' /proc/modules; then
 	timeout 45 insmod "$WORK/apple-ibridge.ko" tb_mode_param=keyboard || { log "apple_ibridge failed to load"; exit 1; }
 	log "apple_ibridge loaded (keyboard mode)"
@@ -75,10 +88,11 @@ if ! grep -q '^apple_ib_tb ' /proc/modules; then
 	log "apple_ib_tb loaded"
 fi
 
-# ── 3. take interface .0002 back from whichever generic driver holds it ──────────────────
-cur=$(basename "$(readlink -f "/sys/bus/hid/devices/$IBDEV/driver" 2>/dev/null)" 2>/dev/null || echo none)
-log "interface .0002 currently owned by: $cur"
-if [ "$cur" != "apple-ibridge-hid" ]; then
+# ── 3. take the remaining interface back from whichever generic driver holds it ──────────
+IBDEV=$(rebind_candidate || true)
+if [ -n "$IBDEV" ]; then
+	cur=$(basename "$(readlink -f "/sys/bus/hid/devices/$IBDEV/driver" 2>/dev/null)" 2>/dev/null || echo none)
+	log "interface $IBDEV currently owned by: $cur"
 	if [ -e "$HIDDRV/$cur/unbind" ]; then
 		printf '%s' "$IBDEV" > "$HIDDRV/$cur/unbind" 2>/dev/null && log "unbound from $cur"
 		sleep 1
@@ -87,6 +101,9 @@ if [ "$cur" != "apple-ibridge-hid" ]; then
 		printf '%s' "$IBDEV" > "$HIDDRV/apple-ibridge-hid/bind" 2>/dev/null && log "bound to apple-ibridge-hid"
 		sleep 2
 	fi
+
+else
+	log "no non-apple iBridge interface needs rebinding"
 fi
 
 # ── 4. re-probe apple_ib_tb now that the device exists ───────────────────────────────────

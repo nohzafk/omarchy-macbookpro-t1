@@ -1,66 +1,38 @@
---- /tmp/tb-pristine/apple-ibridge.c	2026-08-18 18:01:10
-+++ ./apple-ibridge.c	2026-08-18 18:01:38
-@@ -145,6 +145,11 @@
- 
- static DEFINE_MUTEX(appleib_tbmode_lock);
- 
-+/* FIX 2 (local): guards against re-entering apple_ib_set_tb_mode(). Protected by
-+ * appleib_tbmode_lock. See the long comment in that function.
-+ */
-+static bool appleib_tbmode_switching;
-+
- static bool appleib_cfg_is_keyboard(const struct usb_host_config *cfg)
- {
- 	int i;
-@@ -207,6 +212,28 @@
- 		return -ENODEV;
+--- /tmp/tb-pristine/apple-ibridge.c
++++ ./apple-ibridge.c
+@@ -208,6 +208,16 @@ int apple_ib_set_tb_mode(struct usb_device *udev, enum tb_mode mode)
  
  	mutex_lock(&appleib_tbmode_lock);
-+
-+	/* FIX 2 (local): usb_set_configuration() below tears down the current USB
-+	 * configuration and instantiates the new one, which unbinds and re-binds every
-+	 * interface driver SYNCHRONOUSLY, in this same task. That re-invokes
-+	 * appleib_hid_probe(), which calls this function again — and upstream then takes
-+	 * appleib_tbmode_lock a second time from the task that already holds it:
+ 
++	/* FIX 2 (local): changing configuration tears down the HID interface that is
++	 * currently being probed. Doing that synchronously deadlocks first on this
++	 * driver's mode lock and, if that lock is dropped, on driver-core device locks:
 +	 *
 +	 *   INFO: task modprobe:24033 blocked for more than 983 seconds.
-+	 *   INFO: task modprobe:24033 is blocked on a mutex likely owned by
-+	 *         task modprobe:24033.
++	 *   task:(udev-worker) state:D ... device_del ... usb_set_configuration
 +	 *
-+	 * The wedged task is unkillable (D state), hangs sysinit.target so the login
-+	 * screen never appears, and blocks shutdown, requiring a forced power-off.
-+	 *
-+	 * Two changes fix it: this re-entrancy guard, and dropping the lock around
-+	 * usb_set_configuration() further down so the recursive call can reach the guard
-+	 * instead of blocking on the mutex.
++	 * usb_driver_set_configuration() is the USB core helper for this exact case. It
++	 * queues the change on a work thread so the probe path can release its locks.
 +	 */
-+	if (appleib_tbmode_switching) {
-+		mutex_unlock(&appleib_tbmode_lock);
-+		return 0;
-+	}
- 
  	if (mode == TB_MODE_AUTO)
  		mode = appleib_parse_tb_mode_param();
-@@ -239,6 +266,12 @@
- 	dev_info(&udev->dev, "MBP14,3: switching Touch Bar to cfg=%d (%s)\n",
+ 
+@@ -236,15 +246,13 @@ int apple_ib_set_tb_mode(struct usb_device *udev, enum tb_mode mode)
+ 		goto out_unlock;
+ 	}
+ 
+-	dev_info(&udev->dev, "MBP14,3: switching Touch Bar to cfg=%d (%s)\n",
++	dev_info(&udev->dev, "MBP14,3: queueing Touch Bar switch to cfg=%d (%s)\n",
  		 target_cv, (target_cv == dcv) ? "display" : "keyboard");
  
-+	/* FIX 2 (local): must NOT hold appleib_tbmode_lock across this call — it invokes
-+	 * probe/remove callbacks in this task which re-enter this function.
-+	 */
-+	appleib_tbmode_switching = true;
-+	mutex_unlock(&appleib_tbmode_lock);
-+
- 	ret = usb_set_configuration(udev, target_cv);
+-	ret = usb_set_configuration(udev, target_cv);
++	ret = usb_driver_set_configuration(udev, target_cv);
  	if (ret)
- 		dev_err(&udev->dev, "MBP14,3: usb_set_configuration(%d) failed: %d\n",
-@@ -246,6 +279,9 @@
- 	else
- 		msleep(150); /* let udev settle */
+-		dev_err(&udev->dev, "MBP14,3: usb_set_configuration(%d) failed: %d\n",
++		dev_err(&udev->dev, "MBP14,3: failed to queue configuration %d: %d\n",
+ 			target_cv, ret);
+-	else
+-		msleep(150); /* let udev settle */
  
-+	mutex_lock(&appleib_tbmode_lock);
-+	appleib_tbmode_switching = false;
-+
  out_unlock:
  	mutex_unlock(&appleib_tbmode_lock);
- 	return ret;

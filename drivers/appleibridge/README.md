@@ -34,50 +34,41 @@ kernel-API problem — a plain ordering bug.
 
 Fix: move the definition above `struct appletb_device`, unchanged.
 
-## Fix 2 — self-deadlock in `apple_ib_set_tb_mode()`
+## Fix 2 — synchronous configuration change from probe
 
-`apple-ibridge.c`. This is the one that matters, and the reason nobody gets the Touch Bar
-working on a current kernel.
+`apple-ibridge.c`. `apple_ib_set_tb_mode()` is called from `appleib_hid_probe()`, but it used
+the synchronous `usb_set_configuration()` helper. Changing configuration destroys the HID
+interface that is currently being probed and creates replacement interfaces.
 
 ```
 INFO: task modprobe:24033 blocked for more than 983 seconds.
 INFO: task modprobe:24033 is blocked on a mutex likely owned by task modprobe:24033.
 ```
 
-The recursion:
+Dropping `appleib_tbmode_lock` and adding a re-entrancy guard avoids that first self-deadlock,
+but it is not sufficient. A later trace showed the probing `udev-worker` blocked in
+`device_del()` while synchronously tearing down its own interface:
 
 ```
-appleib_hid_probe()                        .probe for the iBridge HID interfaces
-  └─ apple_ib_set_tb_mode()
-       ├─ mutex_lock(&appleib_tbmode_lock)
-       └─ usb_set_configuration()          tears down and rebuilds the USB config,
-            │                              unbinding and re-binding every interface
-            │                              driver SYNCHRONOUSLY, in this same task
-            └─ appleib_hid_probe()         called again
-                 └─ apple_ib_set_tb_mode()
-                      └─ mutex_lock(&appleib_tbmode_lock)   ← already held by this task
+task:(udev-worker) state:D
+  device_del
+  hid_destroy_device
+  usbhid_disconnect
+  usb_set_configuration
+  apple_ib_set_tb_mode
+  appleib_hid_probe
 ```
 
-Upstream calls a USB core function that invokes driver callbacks while holding its own
-mutex. The wedged task is unkillable (`D` state), it hangs `sysinit.target` so the login
-screen never appears, and it blocks shutdown — recovery needs a forced power-off.
+The stuck worker cannot be frozen, so every suspend attempt times out even when the machine
+otherwise remains usable.
 
-Fix, two parts:
+Fix: use `usb_driver_set_configuration()`. USB core documents this helper specifically for
+the rare case where an interface driver must change configurations. It retains the device
+reference and performs `usb_set_configuration()` on a work thread after the probe path can
+release its device-model locks.
 
-1. A re-entrancy guard, `appleib_tbmode_switching`.
-2. Drop `appleib_tbmode_lock` around `usb_set_configuration()`, so the recursive call can
-   reach the guard instead of blocking on the mutex. The guard alone is not enough — the
-   recursion happens *while the lock is held*, so the inner call would block before ever
-   testing the flag.
-
-Lock discipline after the change, all four paths balanced:
-
-| Path | Flow |
-| --- | --- |
-| no device | returns before taking the lock |
-| guard hit (the recursive call) | lock → unlock → `return 0` |
-| early exits | lock → `goto out_unlock` → unlock |
-| config switch | lock → set flag → **unlock** → `usb_set_configuration()` → lock → clear flag → unlock |
+The replacement HID interfaces probe only after the queued configuration switch starts; by
+then the requested configuration is active and `apple_ib_set_tb_mode()` takes its no-op path.
 
 ## A zero-code workaround, worth knowing
 
