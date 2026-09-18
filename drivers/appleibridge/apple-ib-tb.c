@@ -1325,6 +1325,13 @@ static struct hid_driver appletb_hid_driver = {
 	.input_configured = appletb_input_configured,
 #ifdef CONFIG_PM
 	.suspend = appletb_suspend,
+	/*
+	 * Suspend leaves the touch bar in mode/disp OFF on purpose (see above).
+	 * S3 resets the iBridge on the USB bus and reset_resume restores it, but
+	 * s2idle resumes the device without a reset and only .resume is called:
+	 * without it the strip stays dark until the modules are reloaded.
+	 */
+	.resume = appletb_reset_resume,
 	.reset_resume = appletb_reset_resume,
 #endif
 };
