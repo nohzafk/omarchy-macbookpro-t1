@@ -511,10 +511,12 @@ sudo install -m 755 suspend-15inch/macbook-t1-thunderbolt /usr/lib/systemd/syste
 sudo limine-update && sudo reboot
 ```
 
-Test with a self-waking cycle, so a failure leaves logs and not a guess:
+Test with a self-waking cycle, so a failure leaves logs and not a guess. Go through
+`systemctl suspend`, not `rtcwake -m freeze`: the latter writes `/sys/power/state` directly and
+skips the `system-sleep` hooks, so the Thunderbolt xHCI die on that cycle.
 
 ```bash
-sudo rtcwake -m freeze -s 30
+sudo rtcwake -m no -s 40 && systemctl suspend
 cat /sys/power/suspend_stats/{success,fail}
 ls /sys/bus/pci/drivers/xhci_hcd/   # expect 00:14.0, 07:00.0 and 7d:00.0
 ```
