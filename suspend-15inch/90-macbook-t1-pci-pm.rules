@@ -1,0 +1,6 @@
+# 15-inch T1: PCI devices the Apple firmware lets drop to D3cold do not come back after suspend
+# (Radeon: SMU firmware reload fails with -22; Thunderbolt xHCI: "device inaccessible").
+# Forbid D3cold everywhere and keep bridges awake, at boot and on hotplug. This also covers the
+# NVMe that Omarchy's fix-suspend-nvme.sh misses on these models (it targets 01:00.0, the GPU).
+ACTION=="add", SUBSYSTEM=="pci", ATTR{d3cold_allowed}="0"
+ACTION=="add", SUBSYSTEM=="pci", ATTR{class}=="0x0604*", ATTR{power/control}="on"

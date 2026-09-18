@@ -151,10 +151,23 @@ fi
 echo
 echo "== suspend =="
 cat /sys/power/mem_sleep 2>/dev/null || skip "/sys/power/mem_sleep unreadable"
-D3=/sys/bus/pci/devices/0000:01:00.0/d3cold_allowed
-if [[ -f $D3 ]]; then
-  v=$(cat "$D3")
-  [[ $v == 0 ]] && ok "d3cold_allowed = 0 (correct)" || warn "d3cold_allowed = $v (expect 0)"
+# Resolve the NVMe's PCI address instead of assuming 01:00.0: on the 15-inch
+# (13,3 / 14,3) that slot is the Radeon and the NVMe sits at 02:00.0.
+NVME_PCI=$(basename "$(readlink -f /sys/class/nvme/nvme0/device 2>/dev/null)" 2>/dev/null)
+if [[ -n $NVME_PCI && -f /sys/bus/pci/devices/$NVME_PCI/d3cold_allowed ]]; then
+  v=$(cat "/sys/bus/pci/devices/$NVME_PCI/d3cold_allowed")
+  [[ $v == 0 ]] && ok "NVMe $NVME_PCI d3cold_allowed = 0 (correct)" \
+    || warn "NVMe $NVME_PCI d3cold_allowed = $v (expect 0; Omarchy's fix targets 01:00.0, which is the GPU on 13,3/14,3)"
 else
-  warn "NVMe not at PCI 0000:01:00.0 - the suspend fix may not apply"
+  skip "no NVMe controller found in sysfs"
+fi
+if [[ -f /sys/bus/pci/devices/0000:01:00.0/class ]] \
+  && [[ $(cat /sys/bus/pci/devices/0000:01:00.0/class) == 0x0300* ]]; then
+  ok "discrete GPU at 01:00.0 (15-inch): see README Part 8 for the s2idle recipe"
+  grep -qw 'pcie_port_pm=off' /proc/cmdline \
+    && ok "pcie_port_pm=off (Thunderbolt bridges stay out of D3)" \
+    || warn "pcie_port_pm=off missing: Thunderbolt xHCI will not survive suspend"
+  [[ -x /usr/lib/systemd/system-sleep/macbook-t1-thunderbolt ]] \
+    && ok "thunderbolt sleep hook installed" \
+    || warn "thunderbolt sleep hook missing"
 fi

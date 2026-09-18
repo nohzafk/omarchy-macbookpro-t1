@@ -5,7 +5,9 @@ Getting **Omarchy** — and Linux generally — working properly on a MacBook Pr
 
 Verified on a **MacBookPro14,2** (13-inch 2017, Touch Bar), kernel **7.1.8-arch1-3**, gcc
 16.2.1. Should apply to any T1 machine: `MacBookPro13,1/13,2/13,3` and
-`MacBookPro14,1/14,2/14,3`.
+`MacBookPro14,1/14,2/14,3`. The 15-inch models (`13,3`, `14,3`) add a Radeon and two
+Thunderbolt controllers that change the suspend story; that part was verified on a
+**MacBookPro13,3** (2016, Radeon Pro 450), kernel `7.2.5-3-omarchy`.
 
 ## Results
 
@@ -16,7 +18,7 @@ Verified on a **MacBookPro14,2** (13-inch 2017, Touch Bar), kernel **7.1.8-arch1
 | **Audio** — speakers & mic | ✅ working | Including on `14,2`, which trackers list as unsupported |
 | Webcam | ✅ working | No driver needed, once the T1 firmware survives |
 | Keyboard, trackpad | ✅ working | Mainline `applespi` |
-| Suspend / resume | ✅ working | Including USB-C, with one kernel parameter |
+| Suspend / resume | ✅ working | 13-inch: including USB-C, with one kernel parameter. 15-inch: s2idle plus two files, see Part 8 |
 | Fans, temperature sensors | ✅ working | Firmware-managed; `mbpfan` is **not** needed |
 | macOS dual boot | ✅ working | Never wipe the disk — see below |
 | Bluetooth | ✅ working | Nothing to do |
@@ -180,6 +182,10 @@ EOF
 sudo limine-update
 ```
 
+That parameter is for the 13-inch. On a 15-inch use
+[`suspend-15inch/macbook-t1.conf`](suspend-15inch/) instead (Part 8): `pcie_ports=compat`
+does not keep the Thunderbolt bridges out of D3 there, and it turns native hotplug off.
+
 ---
 
 ## Part 3 — What Omarchy already does, and one bug it has
@@ -189,7 +195,7 @@ For `MacBookPro13,*` and `14,*` the installer automatically applies:
 | Script | Effect |
 | --- | --- |
 | `fix-spi-keyboard.sh` | `macbook12-spi-driver-dkms` + initramfs modules |
-| `fix-suspend-nvme.sh` | `d3cold_allowed=0`, the documented NVMe suspend fix |
+| `fix-suspend-nvme.sh` | `d3cold_allowed=0`, the documented NVMe suspend fix. **Lands on the GPU on 13,3/14,3**: it hardcodes `01:00.0`, which is the Radeon there, while the NVMe sits at `02:00.0` ([omarchy#10826](https://github.com/omacom/omarchy/issues/10826)). The udev rule in Part 8 covers it |
 | `fix-brcmfmac-supplicant.sh` | `feature_disable=0x82000` for the WPA handshake |
 | `fix-t2.sh` | **correctly skipped** — gated on a T2 PCI ID a T1 does not have |
 
@@ -465,6 +471,60 @@ read as failure:
 - Two Thunderbolt xHCI controllers fail to reset (`Host halt failed, -19`), leaving USB-C dead
   until reboot. Fixed with `pcie_ports=compat` — afterwards all three controllers bind.
 
+### 15-inch (`13,3` / `14,3`): the Radeon and the Thunderbolt controllers
+
+The recipe above does not hold on the 15-inch. Two things fail, with two different causes,
+both read out of the journal and the DSDT on a `MacBookPro13,3`.
+
+**`deep` (S3) comes back with a dead GPU.** The machine resumes, then
+`amdgpu: SMU load firmware failed` → `amdgpu_device_ip_resume failed (-22)`. The Radeon never
+recovers, the compositor and everything that touched it end up in `D` inside `amdgpu_vm_fini`,
+and the screen stays black with the machine alive. Before S3 amdgpu does a PCI config reset of
+the dGPU, then the firmware cuts its power; the SMU refuses the firmware afterwards. In
+`s2idle` that reset is skipped and, with D3cold forbidden, the GPU sleeps powered in D3hot with
+the SMU still running. Same recipe reported working on a `14,3` in
+[omarchy#10826](https://github.com/omacom/omarchy/issues/10826).
+
+**Both Thunderbolt xHCI die in s2idle**, so USB-C is gone until reboot. Two causes:
+
+1. The DSDT runs in Darwin mode on Linux (the kernel declares `_OSI("Darwin")` on Macs). In
+   that mode the `_PS3` of `PEG1`, `UPSB.DSB0` and `UPSB.DSB2` call `PCDA()`, which drops the
+   controller's power GPIOs; the matching `_PS0` only clears a flag, because macOS powers the
+   chip back up from its driver (`NHI0.TRPE`). Linux runs those `_PS3` when it puts the bridges
+   in D3hot at suspend. `pcie_port_pm=off` forbids D3 for every PCIe bridge, so `_PS3` never
+   runs. `pcie_ports=compat` is not enough: the kernel treats Thunderbolt bridges as D3-capable
+   regardless.
+2. With power kept, the `thunderbolt` driver still puts the router to sleep
+   (`tb_switch_suspend`) and, without the S3 firmware resume path, nothing wakes it. A
+   `system-sleep` hook unloads the module before sleep and reloads it after. USB over USB-C
+   goes through the xHCI and does not need the module.
+
+A controller that has already lost power cannot be brought back from userspace: `TRPE 0/1`,
+the `_PS0` chain, link retrain and a secondary bus reset were all tried. Prevent, do not cure.
+
+Install (the drop-in replaces the 13-inch one from Part 2):
+
+```bash
+sudo install -m 644 suspend-15inch/macbook-t1.conf /etc/limine-entry-tool.d/
+sudo install -m 644 suspend-15inch/90-macbook-t1-pci-pm.rules /etc/udev/rules.d/
+sudo install -m 755 suspend-15inch/macbook-t1-thunderbolt /usr/lib/systemd/system-sleep/
+sudo limine-update && sudo reboot
+```
+
+Test with a self-waking cycle, so a failure leaves logs and not a guess:
+
+```bash
+sudo rtcwake -m freeze -s 30
+cat /sys/power/suspend_stats/{success,fail}
+ls /sys/bus/pci/drivers/xhci_hcd/   # expect 00:14.0, 07:00.0 and 7d:00.0
+```
+
+Verified: `success=1 fail=0`, GPU in D0, Wi-Fi reconnected, Touch Bar alive, all three xHCI
+present with no errors, a USB drive enumerated after resume. Wake needs a keypress. Not yet
+verified: SuperSpeed on the USB-C ports after resume, and sleeps of several hours. The
+kernel parameters were tested together with `amdgpu.dpm=0 amdgpu.runpm=0`, which that
+machine carries against spontaneous `ring gfx timeout` hangs; suspend without them is untested.
+
 **Fans need nothing.** `applesmc` loads itself and reports both fans plus ~40 SMC sensors.
 `fan*_manual = 0` means the SMC controls them in firmware: observed 2101 → 3660 RPM under
 load with temperature falling 68 → 61 °C. Guides recommending `mbpfan` for these machines are
@@ -487,7 +547,7 @@ from sysfs, so it works without `usbutils`.
 | "Set Secure Boot to No Security in Startup Security Utility" | Impossible. Secure Boot arrived with the T2; the pane does not exist |
 | "T1 Touch Bar and sound do not work" | Both work. See Parts 5 and 6 |
 | "Install `mbpfan` or the CPU will throttle" | Wrong. The SMC manages fans in firmware |
-| "Use `s2idle` to fix suspend" | Not the fix here. The NVMe `d3cold` fix is, and it is automatic |
+| "Use `s2idle` to fix suspend" | Not the fix on the 13-inch. The NVMe `d3cold` fix is, and it is automatic. On the 15-inch `s2idle` **is** required, together with `pcie_port_pm=off` and the Thunderbolt hook (Part 8) |
 | "No 5 GHz on BCM43602, unfixable" | Fixable, and it also recovers ~26 dB of signal |
 | "Audio does not work on `MacBookPro14,2`" | It does |
 | "Extract Wi-Fi firmware from macOS per the t2linux guide" | Not applicable. BCM43602 firmware ships in `linux-firmware`; only the NVRAM is missing |

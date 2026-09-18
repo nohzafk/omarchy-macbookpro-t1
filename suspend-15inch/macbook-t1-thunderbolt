@@ -1,0 +1,12 @@
+#!/bin/sh
+# 15-inch T1 (MacBookPro13,3 / 14,3) in s2idle: the thunderbolt driver puts both Alpine Ridge
+# controllers to sleep (tb_switch_suspend) and, without the S3 firmware resume path, nothing
+# wakes them: NHI, xHCI and the internal bridges come back "device inaccessible" and USB-C is
+# dead until reboot. Without the module the NHI is just a driverless PCI device going to D3hot
+# (its ACPI _PS3 is empty) and it resumes fine.
+# With a Thunderbolt device attached the module is busy and the unload fails: suspend proceeds
+# anyway, USB-C may not survive that cycle.
+case "$1" in
+  pre)  modprobe -r thunderbolt 2>/dev/null || logger -t macbook-t1 "thunderbolt busy, not unloaded" ;;
+  post) modprobe thunderbolt ;;
+esac
