@@ -35,6 +35,13 @@ WORK=/run/touchbar
 IBDEV=0003:05AC:8600.0002
 HIDDRV=/sys/bus/hid/drivers
 
+FNMODE=1
+#   0 = F1-F12 for all Fn press state
+#   1 = special keys normally, F1-F12 while Fn is held
+#   2 = F1-F12 normally, special keys while Fn is held
+#   3 = special keys always
+printf '%s %i\n' "fnmode=$FNMODE"
+
 # ── 0. is the T1 even alive? ─────────────────────────────────────────────────────────────
 found=""
 for d in /sys/bus/usb/devices/*/; do
@@ -71,7 +78,7 @@ fi
 
 # fnmode/idle/dim are settable at load time even though their sysfs entries are 0444.
 if ! grep -q '^apple_ib_tb ' /proc/modules; then
-	timeout 45 insmod "$WORK/apple-ib-tb.ko" fnmode=0 idle_timeout=-1 dim_timeout=-1 || { log "apple_ib_tb failed to load"; exit 1; }
+	timeout 45 insmod "$WORK/apple-ib-tb.ko" fnmode="$FNMODE" idle_timeout=-1 dim_timeout=-1 || { log "apple_ib_tb failed to load"; exit 1; }
 	log "apple_ib_tb loaded"
 fi
 
@@ -95,13 +102,13 @@ if ! tb_attr_dir >/dev/null; then
 	log "no writable controls yet — reloading apple_ib_tb to re-probe"
 	timeout 30 rmmod apple_ib_tb 2>/dev/null || log "rmmod apple_ib_tb failed (continuing)"
 	sleep 1
-	timeout 45 insmod "$WORK/apple-ib-tb.ko" fnmode=0 idle_timeout=-1 dim_timeout=-1 || log "reload failed"
+	timeout 45 insmod "$WORK/apple-ib-tb.ko" fnmode="$FNMODE" idle_timeout=-1 dim_timeout=-1 || log "reload failed"
 	sleep 2
 fi
 
 # ── 5. settings, and report ──────────────────────────────────────────────────────────────
 if d=$(tb_attr_dir); then
-	printf '%s' '0'  > "$d/fnmode"       2>/dev/null || true
+	printf '%i' "$FNMODE"  > "$d/fnmode"       2>/dev/null || true
 	printf '%s' '-1' > "$d/idle_timeout" 2>/dev/null || true
 	printf '%s' '-1' > "$d/dim_timeout"  2>/dev/null || true
 	log "SUCCESS: fnmode=$(cat "$d/fnmode") idle=$(cat "$d/idle_timeout") dim=$(cat "$d/dim_timeout")"

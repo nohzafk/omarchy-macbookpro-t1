@@ -1,5 +1,9 @@
 # Omarchy on a T1 MacBook Pro (2016–2017, Touch Bar)
 
+# FORK 10/2026 
+Change `touchbar-enable.sh`, use $FNMODE for whole script, default to 1.
+
+
 Getting **Omarchy** — and Linux generally — working properly on a MacBook Pro with the Apple
 **T1** chip, including the parts everyone says are impossible.
 
